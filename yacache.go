@@ -20,6 +20,7 @@ type Group struct {
 	name      string
 	getter    Getter
 	mainCache cache
+	peers     PeerPicker
 }
 
 var (
@@ -65,8 +66,27 @@ func (g *Group) Get(key string) (ByteView, error) {
 	return g.load(key)
 }
 
-func (g *Group) load(key string) (ByteView, error) {
+func (g *Group) load(key string) (value ByteView, err error) {
+	if nil != g.peers {
+		if peer, ok := g.peers.PickPeer(key); ok {
+			if value, err = g.getFromPeer(key, peer); nil == err {
+				return
+			}
+
+			log.Println("[YaCache] Failed to get from peer", err)
+		}
+	}
+
 	return g.getLocal(key)
+}
+
+func (g *Group) getFromPeer(key string, peer PeerGetter) (ByteView, error) {
+	bytes, err := peer.Get(g.name, key)
+	if nil != err {
+		return ByteView{}, err
+	}
+
+	return ByteView{b: bytes}, nil
 }
 
 func (g *Group) getLocal(key string) (ByteView, error) {
@@ -83,4 +103,12 @@ func (g *Group) getLocal(key string) (ByteView, error) {
 
 func (g *Group) populateCache(key string, value ByteView) {
 	g.mainCache.add(key, value)
+}
+
+func (g *Group) RegisterPeers(peers PeerPicker) {
+	if nil != g.peers {
+		panic("already exists peers")
+	}
+
+	g.peers = peers
 }
