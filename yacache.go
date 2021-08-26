@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"yacache/singleflight"
 )
 
 type Getter interface {
@@ -21,6 +22,7 @@ type Group struct {
 	getter    Getter
 	mainCache cache
 	peers     PeerPicker
+	loader    *singleflight.Group
 }
 
 var (
@@ -39,6 +41,7 @@ func NewGroup(name string, cacheBytes int64, getter Getter) *Group {
 		name:      name,
 		getter:    getter,
 		mainCache: cache{cacheBytes: cacheBytes},
+		loader:    &singleflight.Group{},
 	}
 
 	groups[name] = g
@@ -67,17 +70,25 @@ func (g *Group) Get(key string) (ByteView, error) {
 }
 
 func (g *Group) load(key string) (value ByteView, err error) {
-	if nil != g.peers {
-		if peer, ok := g.peers.PickPeer(key); ok {
-			if value, err = g.getFromPeer(key, peer); nil == err {
-				return
-			}
+	view, err := g.loader.Do(key, func() (interface{}, error) {
+		if nil != g.peers {
+			if peer, ok := g.peers.PickPeer(key); ok {
+				if value, err = g.getFromPeer(key, peer); nil == err {
+					return value, err
+				}
 
-			log.Println("[YaCache] Failed to get from peer", err)
+				log.Println("[YaCache] Failed to get from peer", err)
+			}
 		}
+
+		return g.getLocal(key)
+	})
+
+	if nil != err {
+		return ByteView{}, err
 	}
 
-	return g.getLocal(key)
+	return view.(ByteView), nil
 }
 
 func (g *Group) getFromPeer(key string, peer PeerGetter) (ByteView, error) {
