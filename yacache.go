@@ -5,6 +5,7 @@ import (
 	"log"
 	"sync"
 	"yacache/singleflight"
+	pb "yacache/yacachepb"
 )
 
 type Getter interface {
@@ -92,12 +93,19 @@ func (g *Group) load(key string) (value ByteView, err error) {
 }
 
 func (g *Group) getFromPeer(key string, peer PeerGetter) (ByteView, error) {
-	bytes, err := peer.Get(g.name, key)
+
+	req := &pb.Request{
+		Group: g.name,
+		Key:   key,
+	}
+	res := &pb.Response{}
+
+	err := peer.Get(req, res)
 	if nil != err {
 		return ByteView{}, err
 	}
 
-	return ByteView{b: bytes}, nil
+	return ByteView{b: res.Value}, nil
 }
 
 func (g *Group) getLocal(key string) (ByteView, error) {

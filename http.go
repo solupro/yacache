@@ -2,6 +2,7 @@ package yacache
 
 import (
 	"fmt"
+	"github.com/golang/protobuf/proto"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"yacache/consistenthash"
+	pb "yacache/yacachepb"
 )
 
 const (
@@ -58,8 +60,14 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, err := proto.Marshal(&pb.Response{Value: view.ByteSlice()})
+	if nil != err {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Write(view.ByteSlice())
+	w.Write(body)
 }
 
 func (p *HTTPPool) Set(peers ...string) {
@@ -92,25 +100,34 @@ type httpGetter struct {
 	baseURL string
 }
 
-func (h *httpGetter) Get(group string, key string) ([]byte, error) {
-	u := fmt.Sprintf("%v%v/%v", h.baseURL, url.QueryEscape(group), url.QueryEscape(key))
+func (h *httpGetter) Get(in *pb.Request, out *pb.Response) error {
+	u := fmt.Sprintf(
+		"%v%v/%v",
+		h.baseURL,
+		url.QueryEscape(in.GetGroup()),
+		url.QueryEscape(in.GetKey()),
+	)
 
 	res, err := http.Get(u)
 	if nil != err {
-		return nil, err
+		return err
 	}
 	defer res.Body.Close()
 
 	bytes, err := ioutil.ReadAll(res.Body)
 	if nil != err {
-		return nil, fmt.Errorf("read response body error: %v", err)
+		return fmt.Errorf("read response body error: %v", err)
 	}
 
 	if http.StatusOK != res.StatusCode {
-		return nil, fmt.Errorf("server returned status:%v - message:%s", res.Status, string(bytes))
+		return fmt.Errorf("server returned status:%v - message:%s", res.Status, string(bytes))
 	}
 
-	return bytes, nil
+	if err = proto.Unmarshal(bytes, out); err != nil {
+		return fmt.Errorf("decoding response body: %v", err)
+	}
+
+	return nil
 }
 
 var _ PeerGetter = (*httpGetter)(nil)
